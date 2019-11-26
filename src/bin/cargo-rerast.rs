@@ -31,6 +31,7 @@ use failure::Error;
 use json::JsonValue;
 use rerast::chunked_diff;
 use rerast::{CompilerInvocationInfo, Config, RerastCompilerDriver, RerastOutput};
+use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::prelude::*;
@@ -51,22 +52,30 @@ const RERAST_JSON_MARKER: &str = "RERAST_JSON_MARKER: ";
 
 /// Queries cargo to find the name of the current crate,
 /// NOTE: this is not cached, so calling it multiple times will run `cargo` again.
-fn metadata() -> Result<JsonValue, Error> {
-    let output = std::process::Command::new("cargo")
-        .args(vec!["metadata", "--no-deps", "--format-version=1"])
-        .stdout(std::process::Stdio::piped())
-        .output()?;
-    ensure!(
-        output.status.success(),
-        "cargo metadata failed:\n{}",
-        std::str::from_utf8(output.stderr.as_slice())?
-    );
-    let metadata_str = std::str::from_utf8(output.stdout.as_slice())?;
-    let parsed = match json::parse(metadata_str) {
-        Ok(v) => v,
-        Err(e) => bail!("Error parsing metadata JSON: {:?}", e),
-    };
-    Ok(parsed)
+fn metadata() -> Result<&'static JsonValue, Error> {
+    lazy_static! {
+        static ref METADATA: Result<JsonValue, Error> = {
+            let output = std::process::Command::new("cargo")
+                .args(vec!["metadata", "--no-deps", "--format-version=1"])
+                .stdout(std::process::Stdio::piped())
+                .output()?;
+            ensure!(
+                output.status.success(),
+                "cargo metadata failed:\n{}",
+                std::str::from_utf8(output.stderr.as_slice())?
+            );
+            let metadata_str = std::str::from_utf8(output.stdout.as_slice())?;
+            let parsed = match json::parse(metadata_str) {
+                Ok(v) => v,
+                Err(e) => bail!("Error parsing metadata JSON: {:?}", e),
+            };
+            Ok(parsed)
+        };
+    }
+    match &*METADATA {
+        Ok(json) => Ok(json),
+        Err(e) => Err((*e).clone())
+    }
 }
 
 // Queries cargo to find the name of the current crate, then runs cargo clean to
